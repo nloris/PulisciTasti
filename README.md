@@ -31,6 +31,19 @@ Requires **macOS 13+**. The app is a universal binary for Apple Silicon and Inte
 
 **Distribution status:** this release is signed ad hoc for local use, not signed with a Developer ID or notarized by Apple. macOS may block a downloaded copy. Building locally is the recommended option for this early release. A rebuilt or moved app may need Accessibility permission granted again.
 
+### Accessibility is enabled but the app is still stuck
+
+A local/ad-hoc update can leave an old app identity in macOS Accessibility settings. Version 1.1.1 opens Settings without also showing a duplicate system prompt, refreshes permission state twice a second, and starts only after you return to the app.
+
+If it remains stuck:
+
+1. Click **Show this app** to locate the exact copy you are running.
+2. Open System Settings → Privacy & Security → Accessibility.
+3. Remove the old **PulisciTasti** entry with **−**, then use **+** to add that exact app again and enable it.
+4. Return to PulisciTasti and click **Check again**. If macOS still reports the old state, click **Restart app**.
+
+The app never changes privacy settings or resets other apps’ permissions. A check is not considered a successful lock until macOS creates the event filter. If creating the filter fails, automatic retries stop; retry manually after resolving the issue.
+
 ## What is and is not blocked
 
 The filter suppresses keyboard-down, keyboard-up, modifier, and system-defined events delivered through a Quartz HID event tap. Mouse clicks, movement, dragging and scrolling are not filtered. Media/brightness keys are covered when macOS delivers them through this event stream; hardware-specific behavior may differ.
@@ -43,7 +56,7 @@ A key's numeric position is held briefly in memory to illuminate the keyboard dr
 
 ## Build from source
 
-Install Apple's Xcode Command Line Tools, then run:
+Quit any running copy before rebuilding. Install Apple's Xcode Command Line Tools, then run:
 
 ```sh
 git clone https://github.com/nloris/PulisciTasti.git

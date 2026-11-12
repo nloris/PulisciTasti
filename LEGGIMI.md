@@ -20,6 +20,17 @@ Una piccola app nativa per pulire la tastiera del Mac: apri, pulisci i tasti, cl
 
 La nuova build potrebbe richiedere di concedere nuovamente il permesso. Quando un timer finisce, il blocco non riparte da solo.
 
+## Spunta attiva ma app ferma su Accessibilità
+
+La versione 1.1.1 elimina il doppio avviso e ricontrolla il permesso automaticamente. Dopo un aggiornamento locale, macOS può però conservare l’autorizzazione della vecchia copia.
+
+1. Clicca **Mostra questa app** per trovare la copia esatta che stai usando.
+2. In Impostazioni di Sistema → Privacy e sicurezza → Accessibilità, seleziona la vecchia voce **PulisciTasti** e rimuovila con **−**.
+3. Aggiungi con **+** la copia appena mostrata e abilitala.
+4. Torna all’app e premi **Ricontrolla**. Se resta ferma, premi **Riavvia l’app**.
+
+L’app non modifica i permessi da sola e non azzera quelli delle altre applicazioni. Chiudila prima di ricompilarla o sostituirla.
+
 ## Compatibilità e limiti
 
 macOS 13 o successivo. La build contiene Apple Silicon e Intel; la verifica diretta su hardware è stata effettuata su Apple Silicon.

@@ -14,6 +14,19 @@ func remainingSeconds(deadline: Date?, now: Date) -> Int? {
 }
 
 final class KeyboardLock: ObservableObject {
+    @Published var permissionGranted = false
+    private var lastPermissionCheck = Date.distantPast
+    // Read-only, injectable for permission-transition regression tests.
+    var permissionCheck: () -> Bool = { AXIsProcessTrusted() }
+    func refreshPermission(now: Date = Date(), force: Bool = false) {
+        guard !demo, force || now.timeIntervalSince(lastPermissionCheck) >= 0.5 else { return }
+        lastPermissionCheck = now
+        let granted = permissionCheck()
+        if permissionGranted != granted { permissionGranted = granted }
+    }
+    func shouldAutoStart(isActive: Bool) -> Bool {
+        !demo && !locked && mayAutoStart && permissionGranted && isActive
+    }
     @Published var presses = 0
     @Published var lastKey: Int64? = nil
     @Published var elapsed = 0
@@ -66,7 +79,8 @@ final class KeyboardLock: ObservableObject {
     func start() {
         guard !locked else { return }
         if demo { beginSession(); return }
-        guard AXIsProcessTrusted() else {
+        refreshPermission(force: true)
+        guard permissionGranted else {
             message = text("Abilita PulisciTasti in Accessibilità, poi torna qui.", "Enable PulisciTasti in Accessibility, then return here.")
             return
         }
@@ -74,6 +88,8 @@ final class KeyboardLock: ObservableObject {
             message = text("Chiudi eventuali campi password e torna qui per attivare il blocco.", "Close any password fields, then return here to lock the keyboard.")
             return
         }
+        // A failed OS tap must not trigger repeated attempts from the polling timer.
+        mayAutoStart = false
         let mask = [CGEventType.keyDown.rawValue, CGEventType.keyUp.rawValue,
                     CGEventType.flagsChanged.rawValue, UInt32(14)]
             .reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1) }
@@ -113,7 +129,7 @@ final class KeyboardLock: ObservableObject {
 
     func checkHealth() {
         guard locked else { return }
-        if !AXIsProcessTrusted() || IsSecureEventInputEnabled() {
+        if !permissionGranted || IsSecureEventInputEnabled() {
             stop()
             message = text("Blocco interrotto da macOS. Torna qui e riattivalo prima di pulire.", "macOS interrupted the lock. Reactivate it before cleaning.")
         } else if let tap, !CGEvent.tapIsEnabled(tap: tap) {
@@ -139,8 +155,10 @@ final class KeyboardLock: ObservableObject {
     }
 
     func openPermissions() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        // Open one surface only: a prompt plus a Settings deeplink produces two dialogs.
+        // A previously signed build may need to be removed and re-added by the user.
+        message = text("Abilita questa app, poi torna qui. Se la spunta è già attiva, segui i passaggi sotto.",
+                       "Enable this app, then return here. If it is already enabled, follow the steps below.")
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
@@ -186,6 +204,7 @@ struct KeyboardIllustration: View {
 struct MainView: View {
     @ObservedObject var keyboard: KeyboardLock
     let quit: () -> Void
+    var restart: () -> Void = {}
     @Environment(\.colorScheme) var scheme
     private let green = Color(red: 0.15, green: 0.58, blue: 0.39)
     func t(_ it: String, _ en: String) -> String { keyboard.text(it, en) }
@@ -252,11 +271,26 @@ struct MainView: View {
                     .multilineTextAlignment(.center).frame(height: 42).padding(.top, 14)
             }
             if !keyboard.locked {
-                Button(keyboard.finished || AXIsProcessTrusted() ? t("Blocca la tastiera", "Lock keyboard") : t("Apri Accessibilità", "Open Accessibility")) {
-                    if keyboard.demo || AXIsProcessTrusted() { keyboard.start() } else { keyboard.openPermissions() }
+                Button(keyboard.finished || keyboard.permissionGranted ? t("Blocca la tastiera", "Lock keyboard") : t("Apri Accessibilità", "Open Accessibility")) {
+                    if keyboard.demo || keyboard.permissionGranted { keyboard.start() } else { keyboard.openPermissions() }
                 }.buttonStyle(.plain).font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white).padding(.horizontal, 23).padding(.vertical, 11)
                     .background(green, in: Capsule()).padding(.top, 15)
+            }
+            if !keyboard.locked && !keyboard.finished && !keyboard.demo {
+                HStack(spacing: 18) {
+                    Button(t("Ricontrolla", "Check again")) { keyboard.start() }
+                    Button(t("Mostra questa app", "Show this app")) {
+                        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                    }
+                    Button(t("Riavvia l’app", "Restart app"), action: restart)
+                }.buttonStyle(.plain).font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(green).padding(.top, 14)
+                Text(t("Spunta attiva ma non funziona? Rimuovi la vecchia voce con −, aggiungi questa app con + e riavviala.",
+                       "Already enabled but stuck? Remove the old entry with −, add this app with +, then restart it."))
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
             }
             Spacer(minLength: 14)
             HStack(spacing: 5) {
@@ -296,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.level = .floating
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.delegate = self
-        window.contentView = NSHostingView(rootView: MainView(keyboard: keyboard, quit: { [weak self] in self?.quit() }))
+        window.contentView = NSHostingView(rootView: MainView(keyboard: keyboard, quit: { [weak self] in self?.quit() }, restart: { [weak self] in self?.restartApp() }))
         window.center()
         window.makeKeyAndOrderFront(nil)
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -310,12 +344,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.keyboard.tick()
-            if !self.preview { self.keyboard.checkHealth() }
+            if !self.preview {
+                self.keyboard.refreshPermission()
+                self.keyboard.checkHealth()
+                // Never lock while the user is still entering a password in Settings.
+                if self.keyboard.shouldAutoStart(isActive: NSApp.isActive) { self.keyboard.start() }
+            }
         }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        if !preview, window != nil, keyboard.mayAutoStart { keyboard.start() }
+        if !preview, window != nil {
+            keyboard.refreshPermission(force: true)
+            if keyboard.shouldAutoStart(isActive: true) { keyboard.start() }
+        }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         window.makeKeyAndOrderFront(nil)
@@ -323,6 +365,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func windowWillClose(_ notification: Notification) { quit() }
     func applicationWillTerminate(_ notification: Notification) { timer?.invalidate(); keyboard.stop() }
+    func restartApp() {
+        keyboard.stop()
+        keyboard.mayAutoStart = false
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.allowsRunningApplicationSubstitution = false
+        configuration.arguments = preview ? ["--preview"] : []
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { [weak self] application, error in
+            DispatchQueue.main.async {
+                if application != nil && error == nil { self?.quit() }
+                else { self?.keyboard.message = self?.keyboard.text("Chiudi l’app con la X e riaprila dal Finder.", "Close with ×, then reopen from Finder.") ?? "" }
+            }
+        }
+    }
     @objc func quit() { keyboard.stop(); NSApp.terminate(nil) }
 }
 
@@ -351,7 +407,22 @@ if CommandLine.arguments.contains("--self-test") {
     precondition(session.locked && session.remaining == nil)
     session.stop()
     precondition(!session.locked)
-    print("PASS: keyboard/mouse filtering, timer expiry, no automatic re-lock, unlimited mode, manual unlock.")
+    let permissions = KeyboardLock()
+    var granted = false
+    permissions.permissionCheck = { granted }
+    permissions.refreshPermission(now: now, force: true)
+    precondition(!permissions.permissionGranted && !permissions.shouldAutoStart(isActive: true))
+    granted = true
+    permissions.refreshPermission(now: now.addingTimeInterval(1))
+    precondition(permissions.permissionGranted)
+    precondition(!permissions.shouldAutoStart(isActive: false))
+    precondition(permissions.shouldAutoStart(isActive: true))
+    permissions.mayAutoStart = false
+    precondition(!permissions.shouldAutoStart(isActive: true))
+    granted = false
+    permissions.refreshPermission(now: now.addingTimeInterval(2))
+    precondition(!permissions.permissionGranted)
+    print("PASS: keyboard/mouse filtering, timer expiry, no automatic re-lock, permission grant/revoke refresh, foreground-only activation.")
 } else if let index = CommandLine.arguments.firstIndex(of: "--render-preview"), CommandLine.arguments.count > index + 1 {
     // Offscreen asset generation for documentation; never installs an event tap.
     let app = NSApplication.shared

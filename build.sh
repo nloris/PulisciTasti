@@ -1,7 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 cd "$(dirname "$0")"
-APP="$PWD/PulisciTasti.app"
+DESTINATION="$PWD/PulisciTasti.app"
+APP="$PWD/.build/staging/PulisciTasti.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" .build/AppIcon.iconset
 for arch in arm64 x86_64; do
     xcrun swiftc Sources/main.swift -O -target "$arch-apple-macosx13.0" -o ".build/PulisciTasti-$arch" -framework AppKit -framework SwiftUI -framework ApplicationServices -framework Carbon
@@ -19,8 +20,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>PulisciTasti</string>
 <key>CFBundleDisplayName</key><string>PulisciTasti</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.1.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.1.1</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
@@ -30,4 +31,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 codesign --force --sign - "$APP"
 "$APP/Contents/MacOS/PulisciTasti" --self-test
-printf 'App pronta: %s\n' "$APP"
+# Replace the bundle only after successful compilation, signing and self-tests.
+# Quit the app before rebuilding; ad-hoc updates may require re-granting Accessibility.
+if [[ -d "$DESTINATION" ]]; then
+    PREVIOUS="$PWD/.build/PulisciTasti-previous-$(date +%s).app"
+    mv "$DESTINATION" "$PREVIOUS"
+fi
+mv "$APP" "$DESTINATION"
+printf 'App pronta: %s\n' "$DESTINATION"
