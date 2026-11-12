@@ -1,0 +1,24 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal app and run self-tests
+        run: zsh build.sh
+      - name: Verify bundle
+        run: |
+          codesign --verify --strict --verbose PulisciTasti.app
+          lipo -info PulisciTasti.app/Contents/MacOS/PulisciTasti
+          plutil -lint PulisciTasti.app/Contents/Info.plist
+      - name: Package
+        run: ditto -c -k --sequesterRsrc --keepParent PulisciTasti.app PulisciTasti-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulisciTasti-macOS
+          path: PulisciTasti-macOS.zip
